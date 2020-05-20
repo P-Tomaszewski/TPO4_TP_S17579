@@ -15,32 +15,26 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-public class ProxyServer {
-
-
-
-
+public class ProxyServer  {
     private static Pattern pattern = Pattern.compile("_");
     private static Charset charset = Charset.forName("ISO-8859-2");
     private static final int BSIZE = 1024;
-    private ServerSocketChannel serverSocketChannel = null;
-    private Selector selector = null;
+    private ServerSocketChannel serverSocket = null;
+    private Selector selector = Selector.open();
     private String host = "localhost";
     private int port = 6154;
     HashMap<String, Topic> topicMap;
 
-    public ProxyServer()
-    {
+    public ProxyServer() throws IOException {
       try
       {
         topicMap = new HashMap<>();
         topicMap.put("politic", new Topic("politic"));
         topicMap.put("sport", new Topic("sport"));
-        serverSocketChannel = ServerSocketChannel.open();
-        serverSocketChannel.configureBlocking(false);
-        serverSocketChannel.socket().bind(new InetSocketAddress(host, port));
-        selector = Selector.open();
-        serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+        serverSocket = ServerSocketChannel.open();
+        serverSocket.configureBlocking(false);
+        serverSocket.bind(new InetSocketAddress(host, port));
+        serverSocket.register(selector, SelectionKey.OP_ACCEPT);
 
       } catch (Exception exc)
       {
@@ -57,25 +51,17 @@ public class ProxyServer {
         try
         {
           selector.select();
-
-          Set<SelectionKey> keys = selector.selectedKeys();
-          Iterator<SelectionKey> iterator = keys.iterator();
-          while (iterator.hasNext())
-          {
+          Set<SelectionKey> selectionKeys = selector.selectedKeys();
+          Iterator<SelectionKey> iterator = selectionKeys.iterator();
+          while (iterator.hasNext()){
             SelectionKey key = iterator.next();
             iterator.remove();
-            if (key.isAcceptable())
-            {
-              SocketChannel sc = serverSocketChannel.accept();
-              sc.configureBlocking(false);
-              sc.register(selector, SelectionKey.OP_READ);
-              continue;
+            if (key.isAcceptable()) {
+              register(selector, serverSocket);
             }
-            if (key.isReadable())
-            {
-              SocketChannel sc = (SocketChannel) key.channel();
-              serviceRequest(sc);
-              continue;
+            if (key.isReadable()) {
+              SocketChannel client = (SocketChannel) key.channel();
+              serviceRequest(client);
             }
           }
         } catch (IOException e)
@@ -85,18 +71,25 @@ public class ProxyServer {
           continue;
         }
       }
-
     }
 
-    private void serviceRequest(SocketChannel sc) throws IOException
+  private static void register(Selector selector, ServerSocketChannel serverSocket)
+          throws IOException {
+
+    SocketChannel client = serverSocket.accept();
+    client.configureBlocking(false);
+    client.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+  }
+
+    private void serviceRequest(SocketChannel client) throws IOException
     {
-      if (!sc.isOpen())
+      if (!client.isOpen())
         return;
-      String reqString = readData(sc);
+      String reqString = readData(client);
       System.out.println("Got: " + reqString);
       String[] reqStringTab = pattern.split(reqString);
       if (reqStringTab.length < 2)
-        writeResp(sc, null);
+        writeResp(client, null);
       else
       {
         if (reqStringTab[0].equals("subscribe"))
@@ -117,7 +110,7 @@ public class ProxyServer {
               tmp += key + "_";
             }
             tmp = removeLastChar(tmp);
-            writeResp(sc, tmp);
+            writeResp(client, tmp);
           }
         }
         if (reqStringTab[0].equals("modifyTopic"))
@@ -141,15 +134,10 @@ public class ProxyServer {
             String text = reqStringTab[3];
             Topic topicToAddNews = topicMap.get(topic);
             topicToAddNews.addNews(text);
-            ///Dodac wysylke do subskrybetnwo
-
-            if(topicToAddNews.listOfNews.size() > 0)
-            writeResp(sc, topicToAddNews.listOfNews.get(0));
-
+            sendMesagesToClients(text);
           }
         }
       }
-      sc.close();
     }
 
     public String removeLastChar(String s)
@@ -172,25 +160,24 @@ public class ProxyServer {
       sc.write(buf);
     }
 
-  private void sendMesagesToClients(String mesage){
+  private void sendMesagesToClients(String mesage) throws IOException {
+   //  selector.select();
+    Set<SelectionKey> keys = selector.selectedKeys();
+    Iterator<SelectionKey> iter = keys.iterator();
+    while (iter.hasNext()) {
+      System.out.println();
+      SelectionKey selK =  iter.next();
+      iter.remove();
+      if (selK.isWritable())
+      {
+        System.out.println("ba");
+        SocketChannel chanel1 = (SocketChannel) selK.channel();
+       // writeResp(chanel1, mesage);
 
-    try {
-      selector.select();
-      Set keys = selector.selectedKeys();
-      Iterator iter = keys.iterator();
-      while (iter.hasNext()) {
-        SelectionKey selK = (SelectionKey) iter.next();
-        if(selK.isWritable()) {
-          SocketChannel chanel = (SocketChannel) selK.channel();
-         // ReadWriteNIO.write(mesage, chanel);
-        }
+        continue;
       }
-    } catch (IOException e) {
-      e.printStackTrace();
     }
-
   }
-
     private String readData(SocketChannel sc)
     {
       int numRead = -1;
